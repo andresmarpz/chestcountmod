@@ -2,6 +2,7 @@ package tk.avicia.chestcountmod;
 
 import net.minecraft.block.BlockContainer;
 import net.minecraft.block.state.IBlockState;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.util.ITooltipFlag;
@@ -9,11 +10,15 @@ import net.minecraft.inventory.Container;
 import net.minecraft.inventory.ContainerChest;
 import net.minecraft.inventory.InventoryBasic;
 import net.minecraft.item.ItemStack;
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.tileentity.TileEntityChest;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.text.TextComponentString;
 import net.minecraft.util.text.TextFormatting;
 import net.minecraftforge.client.event.GuiScreenEvent;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
+import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
@@ -21,6 +26,8 @@ import net.minecraftforge.fml.common.gameevent.TickEvent;
 import tk.avicia.chestcountmod.configs.ConfigsGui;
 import tk.avicia.chestcountmod.configs.locations.LocationsGui;
 import tk.avicia.chestcountmod.configs.locations.MultipleElements;
+import tk.avicia.chestcountmod.core.LootChest;
+import tk.avicia.chestcountmod.core.Mythic;
 
 import java.awt.*;
 import java.util.List;
@@ -32,7 +39,7 @@ public class EventHandlerClass {
             TextFormatting.LIGHT_PURPLE, TextFormatting.DARK_BLUE, TextFormatting.DARK_GREEN, TextFormatting.DARK_RED,
             TextFormatting.DARK_PURPLE, TextFormatting.BLUE};
 
-    private boolean hasMythicBeenRegistered = false;
+    private boolean hasMythicBeenRegistered = false, searchedChest = false;
     private int chestsDry = 0;
     private BlockPos chestLocation = null;
 
@@ -71,6 +78,7 @@ public class EventHandlerClass {
                 this.chestsDry = ChestCountMod.getMythicData().getChestsDry();
                 // Defaults to not having a mythic in the chest
                 this.hasMythicBeenRegistered = false;
+                this.searchedChest = false;
                 lowerInventory.setCustomName((ChestCountMod.CONFIG.getConfigBoolean("enableColoredName") ? ChestCountMod.getRandom(colors) : "") + containerName + " #" +
                         ChestCountMod.getChestCountData().getSessionChestCount()
                         + " Tot: " + ChestCountMod.getChestCountData().getTotalChestCount());
@@ -88,7 +96,8 @@ public class EventHandlerClass {
         if (openContainer instanceof ContainerChest) {
             InventoryBasic lowerInventory = (InventoryBasic) ((ContainerChest) openContainer).getLowerChestInventory();
             String containerName = lowerInventory.getName();
-            if (containerName.contains("Loot Chest")) {
+            if (containerName.contains("Loot Chest") && !this.searchedChest) {
+                int tier = getLootchestTier(containerName.split(" ")[2]);
                 GlStateManager.pushMatrix();
                 GlStateManager.translate(1f, 1f, 1f);
                 int screenWidth = event.getGui().width;
@@ -106,6 +115,10 @@ public class EventHandlerClass {
                 }
                 boolean isMythicInChest = false;
 
+                LootChest current = ChestCountMod.getChestManager().getChestAt(chestLocation.getX(), chestLocation.getY(), chestLocation.getZ());
+                if(current == null) current = ChestCountMod.getChestManager().addChestAt(chestLocation.getX(), chestLocation.getY(), chestLocation.getZ(), tier);
+                int minLevel = current.getMinLevel();
+                int maxLevel = current.getMaxLevel();
                 for (int i = 0; i < 27; i++) {
                     ItemStack itemStack = lowerInventory.getStackInSlot(i);
                     if (!itemStack.getDisplayName().equals("Air")) {
@@ -114,12 +127,13 @@ public class EventHandlerClass {
                         Optional<String> mythicTier = lore.stream()
                                 .filter(line -> Objects.requireNonNull(TextFormatting.getTextWithoutFormattingCodes(line)).contains("Tier: Mythic")).findFirst();
                         Optional<String> itemLevel = lore.stream()
-                                .filter(line -> line.contains("Lv. ")).findFirst();
+                                .filter(line -> line.contains("Lv. Range")).findFirst();
+                        Optional<String> combatLevel = lore.stream().filter(line -> line.contains("Combat Lv.")).findFirst();
+                        try{
+                            if (itemLevel.isPresent()) {
+                                if (mythicTier.isPresent()) {
+                                    if (!hasMythicBeenRegistered) { // Makes sure you don't register the same mythic twice
 
-                        if (mythicTier.isPresent()) {
-                            if (!hasMythicBeenRegistered) { // Makes sure you don't register the same mythic twice
-                                if (itemLevel.isPresent()) {
-                                    try {
                                         // A new mythic has been found!
                                         String mythicString = itemStack.getDisplayName() + " " + itemLevel.get();
                                         if (ChestCountMod.CONFIG.getConfigBoolean("displayMythicOnFind")) {
@@ -131,22 +145,40 @@ public class EventHandlerClass {
                                         }
                                         EntityPlayerSP player = ChestCountMod.getMC().player;
                                         ChestCountMod.getMythicData().addMythic(ChestCountMod.getChestCountData().getTotalChestCount(), TextFormatting.getTextWithoutFormattingCodes(mythicString), this.chestsDry, chestLocation.getX(), chestLocation.getY(), chestLocation.getZ());
-                                    } catch (Exception e) {
-                                        // If a mythic is in the chest, just catch every exception (I don't want to risk a crash with a mythic in the chest)
-                                        e.printStackTrace();
+
                                     }
+                                } else {
+                                    // not a mythic, but a box
+                                    String levelRange = TextFormatting.getTextWithoutFormattingCodes(itemLevel.get().split(" ")[3]);
+                                    int min = Integer.parseInt(Objects.requireNonNull(levelRange).split("-")[0]);
+                                    int max = Integer.parseInt(Objects.requireNonNull(levelRange).split("-")[1]);
+                                    int avg = Math.round((float)(max + min) / 2);
+
+                                    if (avg < minLevel || minLevel == -1) minLevel = avg;
+                                    if (avg > maxLevel || maxLevel == -1) maxLevel = avg;
                                 }
+                                isMythicInChest = true;
+                            }else if(combatLevel.isPresent()){
+                                if(itemStack.getDisplayName().contains("Potion") && !itemStack.getDisplayName().contains("Healing")) continue;
+                                int level = Integer.parseInt(combatLevel.get().split(": ")[1]);
+                                if(level < minLevel || minLevel == -1) minLevel = level;
+                                if(level > maxLevel || maxLevel == -1) maxLevel = level;
                             }
-                            isMythicInChest = true;
+                        } catch (Exception e) {
+                            // If a mythic is in the chest, just catch every exception (I don't want to risk a crash with a mythic in the chest)
+                            e.printStackTrace();
                         }
                     }
                 }
                 // After checking every item in the chest
+                this.searchedChest = true;
                 if (isMythicInChest) {
                     if (!this.hasMythicBeenRegistered) {
                         this.hasMythicBeenRegistered = true;
                     }
                 }
+
+                current.setMinAndMax(minLevel, maxLevel);
             }
         }
     }
@@ -174,4 +206,60 @@ public class EventHandlerClass {
         elements.draw();
     }
 
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public void render3D(RenderWorldLastEvent event){
+        ChestManager chestManager = ChestCountMod.getChestManager();
+        for(TileEntity tileEntity : Minecraft.getMinecraft().world.loadedTileEntityList){
+            if(tileEntity instanceof TileEntityChest){
+//                LootChest chest = new LootChest(tileEntity.getPos(), 96, 100, 2);
+                LootChest chest = chestManager.getChestAt(tileEntity.getPos().getX(), tileEntity.getPos().getY(), tileEntity.getPos().getZ());
+                if(Objects.nonNull(chest) && getDistanceToBlock(tileEntity.getPos()) < 48){
+                    Vec3d vec3d = new Vec3d(tileEntity.getPos().getX(), tileEntity.getPos().getY(), tileEntity.getPos().getZ());
+
+                    float yaw = Minecraft.getMinecraft().getRenderManager().playerViewY;
+                    float pitch = Minecraft.getMinecraft().getRenderManager().playerViewX;
+                    boolean thirdPerson = Minecraft.getMinecraft().getRenderManager().options.thirdPersonView == 2;
+
+                    float x = (float) (vec3d.x - Minecraft.getMinecraft().getRenderManager().viewerPosX) +0.5f;
+                    float y = (float) (vec3d.y - Minecraft.getMinecraft().getRenderManager().viewerPosY);
+                    float z = (float) (vec3d.z - Minecraft.getMinecraft().getRenderManager().viewerPosZ) +0.5f;
+
+                    // There is a lootchest to render stuff above
+                    if(chest.getMinLevel() == -1 || chest.getMaxLevel() == -1){
+                        RenderUtils.drawNameplate(Minecraft.getMinecraft().getRenderManager().getFontRenderer(),TextFormatting.AQUA +"Chest level not yet scanned", x, y + 1.5f, z, 0, yaw, pitch, thirdPerson);
+                    }else{
+                        List<Mythic> mythics = ChestCountMod.getMythicData().getMythicsIn(chest.getMinLevel(), chest.getMaxLevel());
+                        List<String> lines = chestManager.getChestLines(chest, mythics);
+
+                        for(String line : lines){
+                            RenderUtils.drawNameplate(Minecraft.getMinecraft().getRenderManager().getFontRenderer(),line.substring(0, line.length() -2), x, y + 1.5f, z, 0, yaw, pitch, thirdPerson);
+                            y += (double)((float)Minecraft.getMinecraft().fontRenderer.FONT_HEIGHT * 1.15F * 0.025F);
+                        }
+
+                        RenderUtils.drawNameplate(Minecraft.getMinecraft().getRenderManager().getFontRenderer(),TextFormatting.AQUA +"Lv. " +TextFormatting.DARK_AQUA
+                                +(chest.getMinLevel() == chest.getMaxLevel() ? chest.getMinLevel() : ("" +chest.getMinLevel() +TextFormatting.AQUA +" - " +TextFormatting.DARK_AQUA +chest.getMaxLevel())), x, y + 1.5f, z, 0, yaw, pitch, thirdPerson);
+                    }
+                }
+            }
+        }
+    }
+
+    private int getLootchestTier(String roman){
+        switch(roman) {
+            case "I": return 1;
+            case "II": return 2;
+            case "III": return 3;
+            case "IV": return 4;
+        }
+
+        return -1;
+    }
+
+    public static double getDistanceToBlock(BlockPos pos) {
+        double deltaX = Minecraft.getMinecraft().player.getPosition().getX() - pos.getX();
+        double deltaY = Minecraft.getMinecraft().player.getPosition().getY() - pos.getY();
+        double deltaZ = Minecraft.getMinecraft().player.getPosition().getZ() - pos.getZ();
+
+        return Math.sqrt((deltaX * deltaX) + (deltaY * deltaY) + (deltaZ * deltaZ));
+    }
 }

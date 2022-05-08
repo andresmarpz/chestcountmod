@@ -1,5 +1,6 @@
 package tk.avicia.chestcountmod;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
@@ -54,6 +55,25 @@ public class CustomFile extends File {
             e.printStackTrace();
             return new JsonParser().parse("{}").getAsJsonObject();
         }
+    }
+
+    public String readJsonAsString() {
+        StringBuilder output = new StringBuilder();
+        try {
+            InputStreamReader reader = new InputStreamReader(new FileInputStream(this), StandardCharsets.UTF_8);
+
+            int currentChar;
+            while ((currentChar = reader.read()) != -1) {
+                output.append((char) currentChar);
+            }
+
+            reader.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+
+        return output.toString();
     }
 
     public void writeJson(JsonObject jsonObject) {

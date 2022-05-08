@@ -13,10 +13,11 @@ import tk.avicia.chestcountmod.configs.Config;
 import tk.avicia.chestcountmod.configs.ConfigSetting;
 import tk.avicia.chestcountmod.configs.ConfigsCommand;
 import tk.avicia.chestcountmod.configs.locations.Locations;
+import tk.avicia.chestcountmod.core.Mythic;
 
 import java.awt.*;
-import java.util.HashMap;
-import java.util.Random;
+import java.util.*;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 
 @Mod(modid = ChestCountMod.MODID, name = ChestCountMod.NAME, version = ChestCountMod.VERSION)
@@ -42,6 +43,8 @@ public class ChestCountMod {
 
     private static final ChestCountData CHEST_COUNT_DATA = new ChestCountData();
     private static final MythicData MYTHIC_DATA = new MythicData();
+
+    private static final ChestManager CHEST_MANAGER = new ChestManager();
     public static String PLAYER_UUID = "";
 
     public static TextFormatting getRandom(TextFormatting[] array) {
@@ -56,6 +59,8 @@ public class ChestCountMod {
     public static MythicData getMythicData() {
         return MYTHIC_DATA;
     }
+
+    public static ChestManager getChestManager() { return CHEST_MANAGER; }
 
     public static Minecraft getMC() {
         return Minecraft.getMinecraft();
@@ -76,12 +81,20 @@ public class ChestCountMod {
         MinecraftForge.EVENT_BUS.register(new EventHandlerClass());
         ClientCommandHandler.instance.registerCommand(new LastMythicCommand());
         ClientCommandHandler.instance.registerCommand(new ConfigsCommand());
+
+        Timer timer = new Timer();
+        timer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                getChestManager().save();
+            }
+        }, 0, 60 * 1000);
     }
 
     @EventHandler
     public void preInit(FMLPreInitializationEvent event) {
         CONFIG.initializeConfigs();
         LOCATIONS.initializeLocations();
+        CHEST_MANAGER.initialize();
     }
-
 }
